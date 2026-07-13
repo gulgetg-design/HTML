@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Estaciones — buffers de influencia AXION</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --magenta:#A8337D; --rojo:#36FF03; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         background:#f7f7f8; color:#1c1c1e; }
+  header { background:#fff; border-bottom:1px solid #e3e3e6; padding:12px 16px; }
+  h1 { margin:0 0 10px; font-size:16px; font-weight:600; }
+  .controls { display:flex; gap:28px; align-items:flex-start; flex-wrap:wrap; }
+  .ctl > label { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#666;
+                 display:block; margin-bottom:6px; }
+  #radio { width:280px; vertical-align:middle; accent-color:var(--magenta); }
+  #radioVal { font-variant-numeric:tabular-nums; font-weight:600; color:var(--magenta); margin-left:8px; }
+
+  /* --- filtro desplegable --- */
+  .dropdown { position:relative; }
+  #btnFiltro { padding:6px 12px; font-size:13px; cursor:pointer; background:#fff;
+               border:1px solid #c9c9cf; border-radius:6px; font-family:inherit; }
+  #btnFiltro:hover { border-color:var(--magenta); }
+  #cuenta { color:#888; font-variant-numeric:tabular-nums; }
+  #panelFiltro { display:none; position:absolute; z-index:1000; top:100%; left:0; margin-top:4px;
+                 background:#fff; border:1px solid #d5d5da; border-radius:6px; padding:10px;
+                 box-shadow:0 4px 14px rgba(0,0,0,.14); min-width:260px;
+                 max-height:380px; overflow:auto; }
+  #panelFiltro.abierto { display:block; }
+  #buscaShipto { width:100%; box-sizing:border-box; padding:5px 8px; font-size:13px; margin-bottom:8px;
+                 border:1px solid #ccc; border-radius:4px; font-family:inherit; }
+  .accs { display:flex; gap:6px; margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid #eee; }
+  .accs button { flex:1; font-size:11px; padding:4px; cursor:pointer; background:#f4f4f6;
+                 border:1px solid #ddd; border-radius:4px; font-family:inherit; }
+  .accs button:hover { background:#eaeaee; }
+  #shiptos { display:block; }
+  #shiptos label { font-size:13px; color:#222; display:flex; align-items:center; gap:6px;
+                   cursor:pointer; padding:3px 0; }
+  #shiptos label.oculto { display:none; }
+  #shiptos .st-cod { font-variant-numeric:tabular-nums; font-weight:600; }
+  #shiptos .st-nom { color:#777; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* --- toggle del panel inferior --- */
+  #btnPanel { position:fixed; z-index:1200; right:14px; bottom:14px;
+              padding:8px 14px; font-size:13px; cursor:pointer; background:#fff;
+              border:1px solid #c9c9cf; border-radius:20px; font-family:inherit;
+              box-shadow:0 2px 10px rgba(0,0,0,.18); }
+  #btnPanel:hover { border-color:var(--magenta); }
+
+  #map { height:60vh; min-height:380px; }
+  body.solo-mapa #map { height:calc(100vh - 92px); }
+  body.solo-mapa #panel { display:none; }
+
+  #panel { padding:14px 16px 40px; }
+  #resumen { font-size:13px; color:#555; margin:0 0 8px; }
+  #resumen b { color:var(--rojo); }
+  table { border-collapse:collapse; width:100%; background:#fff; font-size:13px; }
+  th,td { border:1px solid #e3e3e6; padding:6px 9px; text-align:left; }
+  th { background:#fafafa; font-weight:600; font-size:11px; text-transform:uppercase;
+       letter-spacing:.05em; color:#555; }
+  tbody tr:hover { background:#fdf4f9; cursor:pointer; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .empty { color:#999; font-style:italic; }
+  .leaflet-marker-icon.logo { border-radius:50%; background:#fff; border:2px solid #fff;
+                              box-shadow:0 1px 4px rgba(0,0,0,.35); object-fit:contain; }
+  .leaflet-interactive.lente { pointer-events:none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Estaciones — buffers de influencia AXION</h1>
+  <div class="controls">
+    <div class="ctl">
+      <label for="radio">Radio del buffer <span id="radioVal"></span></label>
+      <input type="range" id="radio" min="0.5" max="200.0" step="0.5" value="5.0">
+    </div>
+    <div class="ctl dropdown">
+      <label>SHIP TO</label>
+      <button id="btnFiltro" type="button">Filtro <span id="cuenta"></span> &#9662;</button>
+      <div id="panelFiltro">
+        <input type="text" id="buscaShipto" placeholder="Buscar SHIP TO o nombre&hellip;" autocomplete="off">
+        <div class="accs">
+          <button type="button" id="selTodos">Todos</button>
+          <button type="button" id="selNinguno">Ninguno</button>
+        </div>
+        <div id="shiptos"></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div id="map"></div>
+
+<button id="btnPanel" type="button">Ocultar tabla</button>
+
+<div id="panel">
+  <p id="resumen"></p>
+  <table>
+    <thead><tr>
+      <th>SHIP TO A</th><th>Nombre A</th><th>SHIP TO B</th><th>Nombre B</th>
+      <th class="num">Distancia (km)</th><th class="num">Solape (km)</th>
+    </tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+const ESTACIONES = [{"shipto": "229270", "nombre": "LA BARRANCA SRL", "lat": -33.0710508556799, "lon": -64.3417071786575, "bandera": "AXION"}, {"shipto": "234374", "nombre": "BORTOLON Y URQUIZA COMBUSTIBLES SRL", "lat": -31.1761795759254, "lon": -62.1020703596012, "bandera": "AXION"}, {"shipto": "194432", "nombre": "CIA PETROLERA DEL INTERIOR S.A", "lat": -32.8079964267847, "lon": -61.4059592280006, "bandera": "AXION"}, {"shipto": "200628", "nombre": "REAL SA", "lat": -33.1195371719143, "lon": -68.4869317798495, "bandera": "AXION"}, {"shipto": "229546", "nombre": "RIVARA SA", "lat": -35.05686, "lon": -60.27106, "bandera": "AXION"}, {"shipto": "231362", "nombre": "Equipo Agil", "lat": -27.412799, "lon": -58.996462, "bandera": "AXION"}, {"shipto": "229804", "nombre": "COMBUSTIBLES LITORAL S.A.", "lat": -32.807758, "lon": -58.523476, "bandera": "AXION"}, {"shipto": "229769", "nombre": "COSTA AUSTRAL S.A.", "lat": -38.51759, "lon": -58.74756, "bandera": "AXION"}, {"shipto": "229807", "nombre": "AGRO ENERGIA S.A.", "lat": -26.87857, "lon": -64.99308, "bandera": "AXION"}, {"shipto": "229273", "nombre": "NORBERTO JORGE ANCONETANI", "lat": -32.605283, "lon": -62.674687, "bandera": "AXION"}, {"shipto": "229901", "nombre": "SERVICAMPO S.R.L", "lat": -34.826643, "lon": -64.360473, "bandera": "AXION"}, {"shipto": "189087", "nombre": "LUBRICANTES SAN LORENZO S.R.L.", "lat": -32.702732658031, "lon": -60.7657856256058, "bandera": "AXION"}, {"shipto": "230010", "nombre": "Agroservice Riestra S.A.", "lat": -35.2720917613432, "lon": -59.7880865754466, "bandera": "AXION"}, {"shipto": "230068", "nombre": "COMBUSTIBLES PC SRL", "lat": -35.1879719090085, "lon": -58.2212764051314, "bandera": "AXION"}, {"shipto": "224258", "nombre": "Raiser Tres Arroyos SA", "lat": -38.374569, "lon": -60.298357, "bandera": "AXION"}, {"shipto": "230352", "nombre": "SEFAC Pehuajó S.A.", "lat": -35.8480047061411, "lon": -61.9103997631868, "bandera": "AXION"}, {"shipto": "230366", "nombre": "JP Energy   S.A.", "lat": -39.8765350088525, "lon": -62.6620216066591, "bandera": "AXION"}, {"shipto": "230381", "nombre": "ALT S.A", "lat": -31.63502, "lon": -64.43392, "bandera": "AXION"}, {"shipto": "230667", "nombre": "G-ENERGY S.R.L.", "lat": -27.8223705909264, "lon": -64.2345564052408, "bandera": "AXION"}, {"shipto": "230801", "nombre": "Petrolera del Suquia SRL", "lat": -32.104659, "lon": -63.029013, "bandera": "AXION"}, {"shipto": "230709", "nombre": "Rodopetrol S.A.", "lat": -38.704821, "lon": -62.338724, "bandera": "AXION"}, {"shipto": "230848", "nombre": "FEDEA", "lat": -35.684538, "lon": -63.78318, "bandera": "AXION"}, {"shipto": "230918", "nombre": "FEDEA S.A.", "lat": -35.983547, "lon": -62.688971, "bandera": "AXION"}, {"shipto": "225058", "nombre": "SANDIN HECTOR,FABIOLA Y JUAN S.R.L.", "lat": -46.5826452676666, "lon": -70.9289138548114, "bandera": "AXION"}, {"shipto": "234725", "nombre": "PRIALIS S.R.L", "lat": -32.016336, "lon": -61.227314, "bandera": "AXION"}, {"shipto": "230958", "nombre": "Fertagro S.A.", "lat": -34.27167, "lon": -60.51229, "bandera": "AXION"}, {"shipto": "155495", "nombre": "Servicentro Malargüe S.A.", "lat": -35.4561894009881, "lon": -69.5864997417001, "bandera": "AXION"}, {"shipto": "230986", "nombre": "Equipo Agil", "lat": -26.50056, "lon": -61.20038, "bandera": "AXION"}, {"shipto": "230993", "nombre": "CPI  S.A.", "lat": -33.69784, "lon": -61.95258, "bandera": "AXION"}, {"shipto": "231003", "nombre": "ALT S.A", "lat": -30.91227, "lon": -64.07371, "bandera": "AXION"}, {"shipto": "231048", "nombre": "AGROPETROLERA CHAJARI S.R.L.", "lat": -30.8215371922368, "lon": -58.0456658192394, "bandera": "AXION"}, {"shipto": "231656", "nombre": "Hergia", "lat": -27.65724, "lon": -62.42542, "bandera": "AXION"}, {"shipto": "231368", "nombre": "PETROPRINGLES S.A.", "lat": -38.02629, "lon": -61.38508, "bandera": "AXION"}, {"shipto": "231426", "nombre": "FABRICIO HERBALEJO", "lat": -36.78816, "lon": -63.357773, "bandera": "AXION"}, {"shipto": "231458", "nombre": "GESAL S.A.", "lat": -33.6307795105392, "lon": -65.5229559830039, "bandera": "AXION"}, {"shipto": "231460", "nombre": "BAUHAUS EE S.A.", "lat": -34.14817, "lon": -63.36452, "bandera": "AXION"}, {"shipto": "231457", "nombre": "SINERCOM S.R.L.", "lat": -31.4623974296426, "lon": -60.3949680928008, "bandera": "AXION"}, {"shipto": "231470", "nombre": "BORTOLON Y URQUIZA COMBUSTIBLES SRL", "lat": -30.8926427674423, "lon": -63.1263093287859, "bandera": "AXION"}, {"shipto": "231527", "nombre": "FEDEA S.A.", "lat": -36.5693176828064, "lon": -62.6094745165736, "bandera": "AXION"}, {"shipto": "231528", "nombre": "PETROCOM S.A.", "lat": -37.3577511134133, "lon": -59.0243242294381, "bandera": "AXION"}, {"shipto": "231599", "nombre": "UMPY SRIL", "lat": -28.47017, "lon": -65.69341, "bandera": "AXION"}, {"shipto": "231608", "nombre": "AGRO SUPPLIES", "lat": -24.6903488156155, "lon": -65.041602189542, "bandera": "AXION"}, {"shipto": "231612", "nombre": "GRUPO SAN GUILLERMO S.A.", "lat": -30.3688142404111, "lon": -61.9126996316825, "bandera": "AXION"}, {"shipto": "231667", "nombre": "Lubricantes y Combustibles D’Atri SRL", "lat": -34.138317, "lon": -59.055248, "bandera": "AXION"}, {"shipto": "231668", "nombre": "SEFAC PEHUAJO  (Lincoln)", "lat": -34.83944, "lon": -61.49384, "bandera": "AXION"}, {"shipto": "230994", "nombre": "GERARDO LUIS GORBEÑA", "lat": -30.247778, "lon": -57.670278, "bandera": "AXION"}, {"shipto": "231584", "nombre": "PALPETROL S.R.L.", "lat": -24.27738, "lon": -65.19825, "bandera": "AXION"}, {"shipto": "234684", "nombre": "SOUK S. A. S.", "lat": -28.6387540069705, "lon": -65.1148285420759, "bandera": "AXION"}, {"shipto": "231815", "nombre": "ARMANDO SCHOLLES S.A. DE TRANSPORTE", "lat": -27.00698, "lon": -54.51065, "bandera": "AXION"}, {"shipto": "231825", "nombre": "MAXFA S.A.", "lat": -31.5811257957627, "lon": -68.427823899679, "bandera": "AXION"}, {"shipto": "231849", "nombre": "AGROENERGY RECONQUISTA", "lat": -29.2286416373086, "lon": -59.7207754527778, "bandera": "AXION"}, {"shipto": "231879", "nombre": "EUROPATAGÓNICA S.A.", "lat": -37.5930848229431, "lon": -57.6876400916955, "bandera": "AXION"}, {"shipto": "231895", "nombre": "POSTA DEL MERCOSUR", "lat": -32.54467, "lon": -63.48418, "bandera": "AXION"}, {"shipto": "231873", "nombre": "AGUADA SRL", "lat": -31.2397033574251, "lon": -60.7533070978066, "bandera": "AXION"}, {"shipto": "231853", "nombre": "Yapai SRL", "lat": -35.0329655112988, "lon": -62.9851464148746, "bandera": "AXION"}, {"shipto": "231938", "nombre": "DESAB S.A.", "lat": -34.28256, "lon": -62.69335, "bandera": "AXION"}, {"shipto": "231995", "nombre": "ANTONIO LAPACÓ", "lat": -37.46685, "lon": -61.95142, "bandera": "AXION"}, {"shipto": "234076", "nombre": "AGRO ENTREGAS S.A.", "lat": -29.2240480719052, "lon": -61.742783647313, "bandera": "AXION"}, {"shipto": "234169", "nombre": "COMBUSTIBLES EL TREBOL III S.R.L. EN FORMACION", "lat": -32.7274953634248, "lon": -65.2729447612969, "bandera": "AXION"}, {"shipto": "235886", "nombre": "Lanzoni & Rossi SA", "lat": -34.46396696, "lon": -59.43629659, "bandera": "AXION"}, {"shipto": "235811", "nombre": "SINERCOM S.R.L.", "lat": -38.56675837, "lon": -68.37987941, "bandera": "AXION"}, {"shipto": "234383", "nombre": "Egesur", "lat": -51.67394347, "lon": -69.260592, "bandera": "AXION"}];
+const LOGOS      = {"AXION": "data:image/jpeg;base64,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"};
+const AXION_KEY  = "AXION";
+const MAGENTA    = "#A8337D";
+const ROJO       = "#36FF03";
+const R_TIERRA   = 6371.0088;
+
+const esAxion = e => e.bandera.toUpperCase() === AXION_KEY;
+const rad = d => d * Math.PI / 180;
+
+function haversine(a, b) {
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat/2)**2 +
+            Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon/2)**2;
+  return 2 * R_TIERRA * Math.asin(Math.sqrt(h));
+}
+
+const map = L.map("map");
+L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+  attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19
+}).addTo(map);
+
+function icono(bandera) {
+  const url = LOGOS[bandera];
+  if (!url) return L.divIcon({
+    className: "", iconSize: [14,14], iconAnchor: [7,7],
+    html: `<div style="width:14px;height:14px;border-radius:50%;background:#888;border:2px solid #fff"></div>`
+  });
+  return L.icon({ iconUrl:url, iconSize:[28,28], iconAnchor:[14,14],
+                  popupAnchor:[0,-14], className:"logo" });
+}
+
+ESTACIONES.forEach(e => {
+  e.marker = L.marker([e.lat, e.lon], { icon: icono(e.bandera) })
+    .bindPopup(`<b>${e.nombre || "(sin nombre)"}</b><br>SHIP TO ${e.shipto}<br>${e.bandera}`);
+  if (esAxion(e)) {
+    e.circle = L.circle([e.lat, e.lon], {
+      radius: 0, color: MAGENTA, weight: 1, fillColor: MAGENTA, fillOpacity: 0.08
+    });
+  }
+});
+
+// ---------- filtro por SHIP TO ----------
+const shiptos = [...new Set(ESTACIONES.map(e => e.shipto))].sort();
+const activas = new Set(shiptos);          // SHIP TO activos (visibles)
+const cont    = document.getElementById("shiptos");
+const checks  = [];
+const nombreDe = {};
+ESTACIONES.forEach(e => { if (!(e.shipto in nombreDe)) nombreDe[e.shipto] = e.nombre || ""; });
+
+shiptos.forEach(p => {
+  const lbl = document.createElement("label");
+  const cb  = document.createElement("input");
+  cb.type = "checkbox"; cb.checked = true; cb.value = p;
+  cb.onchange = () => { cb.checked ? activas.add(p) : activas.delete(p); redibujar(); };
+  checks.push(cb);
+  const cod = document.createElement("span");
+  cod.className = "st-cod"; cod.textContent = p;
+  const nom = document.createElement("span");
+  nom.className = "st-nom"; nom.textContent = nombreDe[p] ? "· " + nombreDe[p] : "";
+  lbl.appendChild(cb);
+  lbl.appendChild(cod);
+  lbl.appendChild(nom);
+  lbl.dataset.busca = (p + " " + (nombreDe[p] || "")).toLowerCase();
+  cont.appendChild(lbl);
+});
+
+const panelF = document.getElementById("panelFiltro");
+document.getElementById("btnFiltro").onclick = e => {
+  e.stopPropagation();
+  panelF.classList.toggle("abierto");
+};
+panelF.onclick = e => e.stopPropagation();
+document.addEventListener("click", () => panelF.classList.remove("abierto"));
+
+// buscador: oculta las filas que no matchean (no cambia la selección)
+document.getElementById("buscaShipto").oninput = ev => {
+  const q = ev.target.value.trim().toLowerCase();
+  for (const lbl of cont.children)
+    lbl.classList.toggle("oculto", q !== "" && !lbl.dataset.busca.includes(q));
+};
+
+// Todos / Ninguno: aplican solo a las filas visibles del buscador
+function setVisibles(v) {
+  checks.forEach(cb => {
+    const lbl = cb.parentElement;
+    if (lbl.classList.contains("oculto")) return;   // respetar el filtro de búsqueda
+    cb.checked = v;
+    v ? activas.add(cb.value) : activas.delete(cb.value);
+  });
+  redibujar();
+}
+document.getElementById("selTodos").onclick   = () => setVisibles(true);
+document.getElementById("selNinguno").onclick = () => setVisibles(false);
+
+// ---------- toggle de tabla ----------
+const btnP = document.getElementById("btnPanel");
+btnP.onclick = () => {
+  const oculto = document.body.classList.toggle("solo-mapa");
+  btnP.textContent = oculto ? "Mostrar tabla" : "Ocultar tabla";
+  map.invalidateSize();
+};
+
+// ---------- geometría de la lente ----------
+const lentes = [];
+const PASOS  = 24;
+
+function lente(a, b, rKm) {
+  const crs = map.options.crs;
+  const pa = crs.project(L.latLng(a.lat, a.lon));
+  const pb = crs.project(L.latLng(b.lat, b.lon));
+
+  // L.circle escala el radio por 1/cos(lat) al proyectar; replicamos eso
+  const R = rKm * 1000 / Math.cos(rad((a.lat + b.lat) / 2));
+
+  const dx = pb.x - pa.x, dy = pb.y - pa.y;
+  const d  = Math.hypot(dx, dy);
+  if (d >= 2 * R || d === 0) return null;
+
+  const h  = Math.sqrt(R * R - (d / 2) ** 2);
+  const mx = pa.x + dx / 2, my = pa.y + dy / 2;
+  const ux = -dy / d, uy = dx / d;
+
+  const p1 = { x: mx + ux * h, y: my + uy * h };
+  const p2 = { x: mx - ux * h, y: my - uy * h };
+
+  const arco = (c, from, to) => {
+    const a0 = Math.atan2(from.y - c.y, from.x - c.x);
+    const a1 = Math.atan2(to.y   - c.y, to.x   - c.x);
+    let dA = a1 - a0;
+    while (dA >  Math.PI) dA -= 2 * Math.PI;
+    while (dA < -Math.PI) dA += 2 * Math.PI;
+    const pts = [];
+    for (let i = 0; i <= PASOS; i++) {
+      const t = a0 + dA * (i / PASOS);
+      pts.push(crs.unproject(L.point(c.x + R * Math.cos(t), c.y + R * Math.sin(t))));
+    }
+    return pts;
+  };
+
+  return [...arco(pa, p1, p2), ...arco(pb, p2, p1)];
+}
+
+// ---------- render ----------
+function redibujar() {
+  const rKm = parseFloat(document.getElementById("radio").value);
+  document.getElementById("radioVal").textContent = rKm.toFixed(1) + " km";
+  document.getElementById("cuenta").textContent = `(${activas.size}/${shiptos.length})`;
+
+  ESTACIONES.forEach(e => {
+    const vis = activas.has(e.shipto);
+    vis ? e.marker.addTo(map) : map.removeLayer(e.marker);
+    if (e.circle) {
+      e.circle.setRadius(rKm * 1000);
+      vis ? e.circle.addTo(map) : map.removeLayer(e.circle);
+    }
+  });
+
+  const ax = ESTACIONES.filter(e => esAxion(e) && activas.has(e.shipto));
+  const pares  = [];
+  const chocan = new Set();
+  for (let i = 0; i < ax.length; i++)
+    for (let j = i + 1; j < ax.length; j++) {
+      const d = haversine(ax[i], ax[j]);
+      if (d < 2 * rKm) {
+        pares.push({ a: ax[i], b: ax[j], d, solape: 2 * rKm - d });
+        chocan.add(ax[i]); chocan.add(ax[j]);
+      }
+    }
+  pares.sort((p, q) => p.d - q.d);
+
+  // los buffers quedan siempre magenta
+  ax.forEach(e => e.circle.setStyle({
+    color: MAGENTA, fillColor: MAGENTA, weight: 1, fillOpacity: 0.08
+  }));
+
+  // se pinta solo la intersección de cada par
+  lentes.forEach(l => map.removeLayer(l));
+  lentes.length = 0;
+  for (const p of pares) {
+    const pts = lente(p.a, p.b, rKm);
+    if (!pts) continue;
+    lentes.push(L.polygon(pts, {
+      className: "lente",
+      color: ROJO, weight: 1.5, fillColor: ROJO, fillOpacity: 0.45
+    }).addTo(map));
+  }
+
+  document.getElementById("resumen").innerHTML =
+    `${ax.length} estaciones ${AXION_KEY} visibles · ` +
+    `<b>${chocan.size} con solapamiento</b> · ` +
+    `${pares.length} par(es) a ${rKm.toFixed(1)} km de radio.`;
+
+  const tb = document.getElementById("tbody");
+  tb.innerHTML = "";
+  if (!pares.length) {
+    tb.innerHTML = `<tr><td colspan="6" class="empty">Sin superposiciones a este radio.</td></tr>`;
+    return;
+  }
+  for (const p of pares) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${p.a.shipto}</td><td>${p.a.nombre}</td>
+                    <td>${p.b.shipto}</td><td>${p.b.nombre}</td>
+                    <td class="num">${p.d.toFixed(2)}</td>
+                    <td class="num">${p.solape.toFixed(2)}</td>`;
+    tr.onclick = () => map.fitBounds(
+      L.latLngBounds([[p.a.lat, p.a.lon], [p.b.lat, p.b.lon]]).pad(0.6));
+    tb.appendChild(tr);
+  }
+}
+
+map.fitBounds(L.latLngBounds(ESTACIONES.map(e => [e.lat, e.lon])).pad(0.08));
+document.getElementById("radio").oninput = redibujar;
+redibujar();
+</script>
+</body>
+</html>
